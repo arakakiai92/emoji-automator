@@ -2,7 +2,8 @@ import streamlit as st
 from PIL import Image
 import io
 import requests
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 # --- ページ設定 ---
 st.set_page_config(page_title="アニメスタンプ自動化Webアプリ", layout="wide")
@@ -10,8 +11,8 @@ st.set_page_config(page_title="アニメスタンプ自動化Webアプリ", layo
 # --- サイドバー：要件定義シート＆設定 ---
 with st.sidebar:
     st.header("⚙️ 開発・設定シート")
-    # テスト用にAPIキーを入力できるようにします
-    api_key = st.text_input("APIキー設定 (OpenAI)", type="password")
+    # Google APIキーを入力できるように変更しました
+    api_key = st.text_input("APIキー設定 (Google Gemini API)", type="password")
     github_url = st.text_input("GitHubリポジトリURL", value="arakakiaiai92/emoji-automator")
     
     st.markdown("---")
@@ -30,42 +31,44 @@ with st.sidebar:
 
 # --- 画像生成用の共通関数 ---
 def generate_stamp_image(prompt_text, api_key):
-    """OpenAI API（DALL-E 3）を使ってスタンプ用の画像を生成する関数"""
+    """GoogleのImagenモデルを使ってスタンプ用の画像を生成する関数"""
     if not api_key:
-        st.error("🔑 サイドバーにOpenAIのAPIキーを入力してください。")
+        st.error("🔑 サイドバーにGoogleのAPIキーを入力してください。")
         return None
         
     try:
         # クライアントの初期化
-        client = OpenAI(api_key=api_key)
+        client = genai.Client(api_key=api_key)
         
         # クオリティを担保するための絶対ルールをプロンプトに自動結合
+        # スタンプの品質を安定させるための厳格な制約です
         system_rules = (
             "An isolated digital illustration for a LINE sticker/emoji, "
             "perfectly solid white background, flat colors, clean and simple outlines, "
-            "no shadows, no gradients, no fur or hair textures on animals. "
-            "If it's a cat character, it must NOT have eyebrows or a nose. "
-            "If it's a plant/round character, its face/shape must be a perfect circle, not an oval. "
-            "The design and character character must be perfectly consistent."
+            "no shadows, no gradients, strictly no fur or hair textures. "
+            "If it's a cat character, it must absolutely NOT have eyebrows or a nose. "
+            "If it's a Platycerium ridleyi (plant) or a round character, its face/shape must be a perfect circle, never an oval. "
+            "The design must be perfectly consistent."
         )
         
         full_prompt = f"{system_rules} Character expressing: {prompt_text}"
         
-        with st.spinner("🎨 AIがイラストを生成中... (約10〜20秒かかります)"):
-            response = client.images.generate(
-                model="dall-e-3",
+        with st.spinner("🎨 Google AIがイラストを生成中... (約10〜20秒かかります)"):
+            result = client.models.generate_images(
+                model='imagen-3.0-generate-002',
                 prompt=full_prompt,
-                n=1,
-                size="1024x1024", # DALL-E 3の標準サイズ（後ほど180pxにリサイズ）
-                quality="standard"
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type="image/jpeg",
+                    aspect_ratio="1:1"
+                )
             )
             
-            image_url = response.data[0].url
-            img_data = requests.get(image_url).content
-            image = Image.open(io.BytesIO(img_data))
+            # 生成された画像をPillowオブジェクトとして取得
+            img = result.generated_images[0].image
             
             # LINEの要件に合わせて180x180ピクセルにリサイズ
-            image_resized = image.resize((180, 180), Image.Resampling.LANCZOS)
+            image_resized = img.resize((180, 180), Image.Resampling.LANCZOS)
             return image_resized
             
     except Exception as e:
