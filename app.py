@@ -1,7 +1,8 @@
 import streamlit as st
 from PIL import Image
 import io
-# from apng import APNG # 実際のAPNG生成時に使用
+import requests
+from openai import OpenAI
 
 # --- ページ設定 ---
 st.set_page_config(page_title="アニメスタンプ自動化Webアプリ", layout="wide")
@@ -9,8 +10,9 @@ st.set_page_config(page_title="アニメスタンプ自動化Webアプリ", layo
 # --- サイドバー：要件定義シート＆設定 ---
 with st.sidebar:
     st.header("⚙️ 開発・設定シート")
-    api_key = st.text_input("APIキー設定 (OpenAI等)", type="password")
-    github_url = st.text_input("GitHubリポジトリURL")
+    # テスト用にAPIキーを入力できるようにします
+    api_key = st.text_input("APIキー設定 (OpenAI)", type="password")
+    github_url = st.text_input("GitHubリポジトリURL", value="arakakiaiai92/emoji-automator")
     
     st.markdown("---")
     st.subheader("🎨 キャラ・出力定義 (完全版)")
@@ -26,11 +28,54 @@ with st.sidebar:
     st.subheader("出力フォーマット")
     st.code("サイズ: 180×180 px\n構成: 6コマ 1シート\n形式: APNG")
 
+# --- 画像生成用の共通関数 ---
+def generate_stamp_image(prompt_text, api_key):
+    """OpenAI API（DALL-E 3）を使ってスタンプ用の画像を生成する関数"""
+    if not api_key:
+        st.error("🔑 サイドバーにOpenAIのAPIキーを入力してください。")
+        return None
+        
+    try:
+        # クライアントの初期化
+        client = OpenAI(api_key=api_key)
+        
+        # クオリティを担保するための絶対ルールをプロンプトに自動結合
+        system_rules = (
+            "An isolated digital illustration for a LINE sticker/emoji, "
+            "perfectly solid white background, flat colors, clean and simple outlines, "
+            "no shadows, no gradients, no fur or hair textures on animals. "
+            "If it's a cat character, it must NOT have eyebrows or a nose. "
+            "If it's a plant/round character, its face/shape must be a perfect circle, not an oval. "
+            "The design and character character must be perfectly consistent."
+        )
+        
+        full_prompt = f"{system_rules} Character expressing: {prompt_text}"
+        
+        with st.spinner("🎨 AIがイラストを生成中... (約10〜20秒かかります)"):
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=full_prompt,
+                n=1,
+                size="1024x1024", # DALL-E 3の標準サイズ（後ほど180pxにリサイズ）
+                quality="standard"
+            )
+            
+            image_url = response.data[0].url
+            img_data = requests.get(image_url).content
+            image = Image.open(io.BytesIO(img_data))
+            
+            # LINEの要件に合わせて180x180ピクセルにリサイズ
+            image_resized = image.resize((180, 180), Image.Resampling.LANCZOS)
+            return image_resized
+            
+    except Exception as e:
+        st.error(f"❌ エラーが発生しました: {e}")
+        return None
+
 # --- メインコンテンツ ---
 st.title("あなた専用 アニメスタンプ自動化アプリ")
 st.write("自動抽出（おまかせ）と個別指示（こだわり）を使い分けて、ブラウザからアニメ絵文字を自動生成します。")
 
-# タブでパターンAとパターンBを切り替え
 tab_a, tab_b = st.tabs(["✨ パターンA: 自動抽出 (おまかせ)", "🛠️ パターンB: 個別指示 (こだわり)"])
 
 # ----------------------------------------
@@ -42,8 +87,15 @@ with tab_a:
     
     if st.button("AIにおまかせで進む", key="btn_a_step1"):
         if input_text_a:
-            st.success("✅ AI分析結果: 文字「{}」、強弱2コマ繰り返しのアニメーションを提案します。".format(input_text_a))
-            # ここにAIAPIを叩いてアイデアを出す処理を実装
+            st.success(f"✅ AI分析結果: 文字「{input_text_a}」、強弱2コマ繰り返しのアニメーションを提案します。")
+            
+            # テストとして、1コマ目の画像を実際に生成してみる
+            st.markdown("### 📸 テスト生成結果 (1コマ目)")
+            generated_img = generate_stamp_image(input_text_a, api_key)
+            
+            if generated_img:
+                st.image(generated_img, caption=f"生成されたスタンプ (180x180px)", width=180)
+                st.success("🎉 画像の生成と180pxへのリサイズに成功しました！")
         else:
             st.warning("文字を入力してください。")
 
@@ -51,7 +103,6 @@ with tab_a:
     st.header("STEP 2: コマ送りラフ生成＆コマ並べ")
     
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    # プレースホルダーとして空の枠を表示
     columns = [col1, col2, col3, col4, col5, col6]
     for i, col in enumerate(columns):
         with col:
@@ -60,7 +111,6 @@ with tab_a:
     st.write("")
     if st.button("シート生成＆書き出し (APNG)", key="export_a"):
         st.info("APNGファイルへの変換ロジックを実行し、ダウンロードの準備をしています...")
-        # 実際にはここで画像を生成し、APNGに結合してダウンロードボタンを表示する
 
 # ----------------------------------------
 # パターンB: 個別指示（こだわり）
@@ -71,7 +121,6 @@ with tab_b:
     
     st.write("💡 動きの個別指示 (1コマずつ設定)")
     
-    # 6コマ分の指示を入力するフォーム
     cols_b = st.columns(6)
     frame_prompts = []
     for i in range(6):
@@ -84,7 +133,6 @@ with tab_b:
     
     if st.button("シート生成実行", key="generate_b"):
         st.success("個別指示に基づいて6コマの画像を生成中です...")
-        # プレースホルダー表示
         cols_gen = st.columns(6)
         for i, col in enumerate(cols_gen):
             with col:
