@@ -1,4 +1,5 @@
 streamlit
 Pillow
 apng
-openai
+google-genai
+requests
