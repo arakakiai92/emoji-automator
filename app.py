@@ -116,10 +116,21 @@ with tab_a:
         st.info("APNGファイルへの変換ロジックを実行し、ダウンロードの準備をしています...")
 
 # ----------------------------------------
-# パターンB: 個別指示（こだわり）
+# パターンB: 個別指示（こだわり）- 更新版
 # ----------------------------------------
 with tab_b:
-    st.header("STEP 1: 自動分析 ＆ 詳細指示入力")
+    st.header("STEP 1: 基準となるキャラクター画像のアップロード")
+    # 【追加項目】ファイルアップローダー
+    uploaded_file = st.file_uploader("お手元のキャラクター画像（1コマ目、または三面図など）を選択してください", type=["png", "jpg", "jpeg"])
+    
+    if uploaded_file is not None:
+        # アップロードされた画像を表示
+        image = Image.open(uploaded_file)
+        st.image(image, caption="アップロードされた基準画像", width=180)
+        st.success("基準画像の読み込みが完了しました。これをベースに指示を入力してください。")
+        
+    st.markdown("---")
+    st.header("STEP 2: 自動分析 ＆ 詳細指示入力")
     input_text_b = st.text_input("作成したいスタンプのテーマを入力してください", key="input_b")
     
     st.write("💡 動きの個別指示 (1コマずつ設定)")
@@ -128,18 +139,24 @@ with tab_b:
     frame_prompts = []
     for i in range(6):
         with cols_b[i]:
+            # コマごとの指示を入力
             prompt = st.text_area(f"コマ {i+1}", placeholder="例: 「な」がポップアップ\n無表情から笑顔へ", height=100)
             frame_prompts.append(prompt)
 
     st.markdown("---")
-    st.header("STEP 2: 指示に基づいた生成＆書き出し")
+    st.header("STEP 3: 指示に基づいた生成＆書き出し")
     
     if st.button("シート生成実行", key="generate_b"):
-        st.success("個別指示に基づいて6コマの画像を生成中です...")
-        cols_gen = st.columns(6)
-        for i, col in enumerate(cols_gen):
-            with col:
-                st.markdown(f"<div style='border: 2px solid #4CAF50; padding: 20px; text-align: center; border-radius: 10px; background-color: #f1f8e9;'>生成画像 {i+1}</div>", unsafe_allow_html=True)
+        # まだ画像連携ロジック（I2I）は未実装ですが、UIの確認として
+        if uploaded_file is None:
+            st.error("❌ STEP 1 で基準画像をアップロードしてください。")
+        else:
+            st.success("アップロードされた画像を分析し、個別指示に基づいて6コマの画像を生成します（実装中...）")
+            # プレースホルダー表示
+            cols_gen = st.columns(6)
+            for i, col in enumerate(cols_gen):
+                with col:
+                    st.markdown(f"<div style='border: 2px solid #4CAF50; padding: 20px; text-align: center; border-radius: 10px; background-color: #f1f8e9;'>生成画像 {i+1}</div>", unsafe_allow_html=True)
                 
     if st.button("書き出し (APNG)", key="export_b"):
          st.info("APNGファイルとして書き出します...")
