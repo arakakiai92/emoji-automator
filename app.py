@@ -71,7 +71,7 @@ api_key_input = st.sidebar.text_input(
 )
 
 api_key = api_key_input or os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
-mock_mode = st.sidebar.checkbox("テスト用モック機能を追加（APIキー不要）", value=True)
+mock_mode = st.sidebar.checkbox("テスト用モック機能を追加（APIキー不要）", value=False) # デフォルトをFalseにして本番優先に
 
 template = st.sidebar.selectbox(
     "基本テンプレート選択",
@@ -150,23 +150,37 @@ else:
             animation_plan = []
             
             if "パターンB" in pattern_choice:
+                # モックモード、またはAPIキーがない場合は入力文字を簡易反映
                 if mock_mode or not genai or not api_key:
-                    # モック用の演出データ（ユーザーの指示を想定したダミーデータ）
+                    st.toast("🎨 モックモードで演出をシミュレートします")
+                    # 入力された文字から、各コマに表示する文字を簡易的に作成
+                    clean_text = user_instruction.replace("キラキラを点滅させる", "").strip()
+                    if "なるほど" in user_instruction or not clean_text:
+                        display_text = "なるほど"
+                    else:
+                        display_text = clean_text[:4] # 最大4文字切り出し
+                    
+                    # 指示に「キラキラ」が入っているかを判定
+                    has_sparkle = "キラキラ" in user_instruction
+                    
                     animation_plan = [
-                        {"frame": 1, "offset_y": 0, "text": "な", "sparkle": False},
-                        {"frame": 2, "offset_y": -10, "text": "なる", "sparkle": True},  # 弾んでキラキラ
-                        {"frame": 3, "offset_y": 0, "text": "なるほ", "sparkle": False},
-                        {"frame": 4, "offset_y": -5, "text": "なるほど", "sparkle": False},
-                        {"frame": 5, "offset_y": 0, "text": "なるほど", "sparkle": False},
-                        {"frame": 6, "offset_y": 0, "text": "なるほど", "sparkle": False},
+                        {"frame": 1, "offset_y": 0, "text": display_text[0] if len(display_text)>0 else "", "sparkle": has_sparkle and 1==2},
+                        {"frame": 2, "offset_y": -12, "text": display_text[:2] if len(display_text)>1 else display_text, "sparkle": has_sparkle}, # 2コマ目で大輝き
+                        {"frame": 3, "offset_y": 0, "text": display_text[:3] if len(display_text)>2 else display_text, "sparkle": has_sparkle and 3%2==0},
+                        {"frame": 4, "offset_y": -6, "text": display_text, "sparkle": has_sparkle},
+                        {"frame": 5, "offset_y": 0, "text": display_text, "sparkle": has_sparkle and 5%2==0},
+                        {"frame": 6, "offset_y": 0, "text": display_text, "sparkle": has_sparkle},
                     ]
                 else:
                     try:
                         genai.configure(api_key=api_key)
-                        # JSON出力を強制する設定
+                        # JSON構造を厳密に定義して1.5-flashに渡す
                         model = genai.GenerativeModel(
                             'gemini-1.5-flash',
-                            generation_config={"response_mime_type": "application/json"}
+                            generation_config={
+                                "response_mime_type": "application/json",
+                                "temperature": 0.2
+                            }
                         )
                         prompt = f"""
                         ユーザーの指示に基づいて、180x180ピクセルのアニメーション（全6コマ）の各コマの演出パラメーターをJSON配列で出力してください。
@@ -174,12 +188,17 @@ else:
                         【ユーザーの指示】
                         "{user_instruction}"
                         
-                        【出力フォーマット】
-                        以下のキーを持つ6つのオブジェクトの配列にしてください。余計な説明テキストは一切含めず、純粋なJSONのみを出力してください。
-                        - "frame": コマ番号 (1から6)
-                        - "offset_y": キャラクターの上下移動のピクセル数（弾ませるならマイナス値、通常は0）
-                        - "text": そのコマで画面に表示する文字（例: 1文字ずつ増やすなど）
-                        - "sparkle": キラキラエフェクトを描画するかどうか (true / false)
+                        【出力フォーマット規約】
+                        必ず以下の構造の、6つの要素を持つJSON配列のみを出力してください。バックコトバなどの説明テキストは一切禁止します。
+                        [
+                          {{"frame": 1, "offset_y": 0, "text": "表示する短い文字", "sparkle": false}},
+                          {{"frame": 2, "offset_y": -10, "text": "表示する短い文字", "sparkle": true}},
+                          ...
+                          {{"frame": 6, "offset_y": 0, "text": "表示する短い文字", "sparkle": false}}
+                        ]
+                        - offset_y: キャラを跳ねさせる、弾ませる場合は負の整数（例: -10や-15）、沈ませる場合は正の整数。通常は0。
+                        - text: コマごとに1文字ずつ増やすなど、演出指示（例：「キラキラ」など指示にない無関係なシステム文字は入れない）に沿った文字列。
+                        - sparkle: 指示に「キラキラ」「点滅」などがある場合、光らせたいコマをtrueにする。
                         """
                         response = model.generate_content(prompt)
                         animation_plan = json.loads(response.text)
@@ -189,16 +208,30 @@ else:
 
             # --- 画像合成処理 ---
             frames = []
-            thumb_size = 130
+            # キャラクターのサイズ（180pxの中に余白を残して綺麗に収める）
+            thumb_size = 120 
             resized_base = base_image.resize((thumb_size, thumb_size), Image.Resampling.LANCZOS)
             
+            # OS標準のゴシック体フォントの読み込みを試みる
+            font = None
+            font_sizes = [24, 20, 16] # 文字数に応じて自動縮小
+            for size in font_sizes:
+                for font_path in ["msgothic.ttc", "HelveticaNeue.ttc", "AppleGothic.ttf", "/System/Library/Fonts/Hiragino Sans GB.ttc", "NotoSansCJK-Regular.ttf"]:
+                    try:
+                        font = ImageFont.truetype(font_path, size)
+                        break
+                    except:
+                        continue
+                if font:
+                    break
+
             for i in range(6):
-                # 180px角、背景白固定（ユーザー指定要件）
+                # 180px角、背景白固定（ユーザー指定必須条件）
                 frame = Image.new("RGBA", (180, 180), (255, 255, 255, 255))
                 
-                # デフォルトの位置
+                # デフォルトの中心配置座標
                 offset_x = (180 - thumb_size) // 2
-                offset_y = (180 - thumb_size) // 2
+                offset_y = (180 - thumb_size) // 2 - 10 # 文字スペース確保のため少し上に
                 
                 current_text = ""
                 show_sparkle = False
@@ -208,6 +241,7 @@ else:
                     if "強弱2コマ繰り返し" in template:
                         if i % 2 == 1:
                             offset_y -= 12
+                            show_sparkle = True
                     else:
                         offset_y += int(10 * math.sin(i * math.pi / 3))
                     current_text = f"STEP {i+1}"
@@ -225,18 +259,25 @@ else:
                 # 文字とエフェクトの描画
                 draw = ImageDraw.Draw(frame)
                 
-                # キラキラの描画
+                # キラキラエフェクトの描画（位置をスタンプらしく調整）
                 if show_sparkle:
-                    draw.text((10, 10), "✨✨", fill=(255, 215, 0))
-                    draw.text((150, 10), "✨✨", fill=(255, 215, 0))
+                    # 左上
+                    draw.text((15, 20), "✨", fill=(255, 215, 0), font=font)
+                    # 右上
+                    draw.text((145, 20), "✨", fill=(255, 215, 0), font=font)
+                    # キャラクターの横などにもおまけ
+                    if i % 2 == 0:
+                        draw.text((150, 90), "✨", fill=(255, 215, 0), font=font)
                 
-                # 文字の描画（位置は下部中央付近に簡易固定）
+                # 文字の描画（スタンプ風に中央下部へ太文字風に描画）
                 if current_text:
-                    try:
-                        # 標準フォントで描画（フォントファイルがある場合は適宜変更可能）
-                        draw.text((40, 145), current_text, fill=(50, 50, 50))
-                    except:
-                        pass
+                    # フォントが読み込めない場合の対策として、簡易位置調整
+                    text_x = 90 - (len(current_text) * 10)
+                    text_y = 140
+                    
+                    # 視認性を上げるために、少しずらして重ね書き（擬似ボールド）
+                    for dx, dy in [(-1,-1), (1,-1), (-1,1), (1,1), (0,0)]:
+                        draw.text((text_x + dx, text_y + dy), current_text, fill=(40, 40, 40), font=font)
                 
                 frames.append(frame)
             
